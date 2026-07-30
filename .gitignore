@@ -1,0 +1,45 @@
+# Qué NO se sube al repositorio.
+#
+# La regla general: aquí va sólo lo que NO se puede regenerar. Todo lo que una
+# herramienta vuelve a crear sola (compilados, cachés, dependencias) se queda
+# fuera, porque ocupa mucho y cambia constantemente sin aportar nada.
+
+# Compilados: el APK y la versión web. 110 MB que se regeneran exportando.
+build/
+
+# Caché de importación de Godot. Se reconstruye sola al abrir el proyecto.
+# Ojo: los archivos *.import sueltos SÍ se suben. En Godot 4 hacen falta, y la
+# plantilla anterior de este archivo los excluía por error.
+.godot/
+
+# Dependencias de Node: se reinstalan con "npm install".
+node_modules/
+
+# Copias de seguridad y temporales
+*.bak
+*.tmp
+
+# Estado local de herramientas
+.summer/
+.claude/
+.specstory/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Variables de entorno (aquí nunca deben acabar credenciales)
+.env*
+
+# ---------------------------------------------------------------------------
+# LA MÚSICA
+#
+# Se queda fuera a propósito, porque este repositorio es PÚBLICO y no consta
+# bajo qué licencia está el mp3. Publicar música ajena en abierto puede dar
+# problemas. El archivo sigue en tu ordenador y dentro de las versiones ya
+# exportadas, así que el juego suena igual.
+#
+# Si la pista es tuya o es libre de derechos, borra la línea de abajo.
+music/
+
+# Temporales de edición
+*.gd.tmp.*
