@@ -30,16 +30,8 @@ Thumbs.db
 # Variables de entorno (aquí nunca deben acabar credenciales)
 .env*
 
-# ---------------------------------------------------------------------------
-# LA MÚSICA
-#
-# Se queda fuera a propósito, porque este repositorio es PÚBLICO y no consta
-# bajo qué licencia está el mp3. Publicar música ajena en abierto puede dar
-# problemas. El archivo sigue en tu ordenador y dentro de las versiones ya
-# exportadas, así que el juego suena igual.
-#
-# Si la pista es tuya o es libre de derechos, borra la línea de abajo.
-music/
+# La música SÍ va al repositorio: la pista está generada con IA por el propio
+# autor del juego, así que no hay licencia de terceros de por medio.
 
 # Temporales de edición
 *.gd.tmp.*
