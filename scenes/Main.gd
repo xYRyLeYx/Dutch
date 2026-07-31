@@ -72,6 +72,10 @@ var _gate: Array = []
 var _gate_active: bool = false
 var _gate_base: Dictionary = {}
 var _tutorial: TutorialOverlay = null
+
+# Contador de toques del acceso oculto a los ajustes de servidor.
+var _secret_taps: int = 0
+var _secret_last_tap_ms: int = 0
 var _pending_fx: Dictionary = {}
 var _last_fx_seq: int = 0
 var _hidden_by_fx: Array[Control] = []
@@ -764,7 +768,7 @@ func _show_home() -> void:
 		c.set_card(id, true)
 		showcase.add_child(c)
 		_menu_cards.append(c)
-	left.add_child(_label("Baraja española · 4 cartas · gana quien menos suma", 12, DutchUI.TEXT_MUTED, true))
+	left.add_child(_secret_zone("Baraja española · 4 cartas · gana quien menos suma"))
 
 	# Derecha: nombre y botones.
 	var right := _col(8)
@@ -778,37 +782,41 @@ func _show_home() -> void:
 	right.add_child(name_input)
 
 	right.add_child(_btn("Jugar contra bots", func():
-		if name_input.text.strip_edges() == "":
-			_toast("Escribe tu nombre primero")
-			return
+		if not _name_ok(name_input): return
 		NetworkManager.start_local_game(name_input.text.strip_edges())
 	, true))
 
-	right.add_child(_btn("Crear partida online", func():
-		if name_input.text.strip_edges() == "":
-			_toast("Escribe tu nombre primero")
-			return
-		NetworkManager.host_game(_generate_room_code(), name_input.text.strip_edges())
-		# Sólo se entra a la sala si la conexión ha arrancado: si faltaba la
-		# dirección del servidor, host_game avisa y no hay nada que enseñar.
+	# Con desconocidos: un solo botón y sin listas. Con pocos jugadores una
+	# lista de salas estaría casi siempre vacía y daría sensación de juego
+	# muerto; así, si no hay mesa abierta, abres tú una y esperas dentro.
+	right.add_child(_btn("Buscar partida pública", func():
+		if not _name_ok(name_input): return
+		NetworkManager.find_public_game(name_input.text.strip_edges())
+		if NetworkManager.online:
+			_show_lobby()
+	))
+
+	right.add_child(_btn("Crear partida privada", func():
+		if not _name_ok(name_input): return
+		NetworkManager.host_game(name_input.text.strip_edges(), false)
+		# Sólo se entra a la sala si la conexión ha arrancado: si algo falló,
+		# host_game ya ha avisado y no hay nada que enseñar.
 		if NetworkManager.online:
 			_show_lobby()
 	))
 
 	var code_input := LineEdit.new()
-	code_input.placeholder_text = "Código de sala"
+	code_input.placeholder_text = "Código de un amigo"
 	code_input.max_length = 4
 	code_input.custom_minimum_size = Vector2(0, 42)
 	right.add_child(code_input)
 
-	right.add_child(_btn("Unirme a una partida", func():
-		if name_input.text.strip_edges() == "":
-			_toast("Escribe tu nombre primero")
-			return
+	right.add_child(_btn("Unirme con código", func():
+		if not _name_ok(name_input): return
 		if code_input.text.strip_edges().length() < 4:
 			_toast("Escribe el código de la sala")
 			return
-		NetworkManager.join_game(code_input.text.strip_edges().to_upper(), name_input.text.strip_edges())
+		NetworkManager.join_game(code_input.text.strip_edges(), name_input.text.strip_edges())
 		if NetworkManager.online:
 			_show_lobby()
 	))
@@ -825,9 +833,13 @@ func _show_home() -> void:
 	var rules_btn := _btn("Reglas", func(): _open_rules())
 	rules_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	help_row.add_child(rules_btn)
-	var server_btn := _btn("Servidor", func(): _open_server_modal())
-	server_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	help_row.add_child(server_btn)
+
+## Sin nombre no se juega a nada: aparece en la mesa de los demás.
+func _name_ok(field: LineEdit) -> bool:
+	if field.text.strip_edges() != "":
+		return true
+	_toast("Escribe tu nombre primero")
+	return false
 
 ## Un fallo de conexión no puede dejarte mirando una sala de espera que ya no
 ## existe: se avisa y se vuelve al menú.
@@ -836,8 +848,39 @@ func _on_connection_error(msg: String) -> void:
 	if not NetworkManager.online and GameLogic.state.is_empty():
 		_back_to_menu()
 
-## Dónde vive el relé. Se puede cambiar desde aquí y queda guardado, así que
-## estrenar un servidor nuevo NO obliga a reinstalar el juego.
+## Acceso OCULTO a los ajustes de servidor: cinco toques seguidos en la línea
+## pequeña de la portada.
+##
+## No hay botón a la vista a propósito. A un jugador normal la palabra
+## "servidor" sólo le desconcierta —el juego ya trae la dirección puesta y no
+## tiene que tocar nada—, pero si algún día el relé se muda de sitio hace falta
+## alguna manera de cambiarlo sin publicar una actualización.
+func _secret_zone(text: String) -> Label:
+	var l := _label(text, 12, DutchUI.TEXT_MUTED, true)
+	l.mouse_filter = Control.MOUSE_FILTER_STOP
+	l.gui_input.connect(_on_secret_input)
+	return l
+
+func _on_secret_input(event: InputEvent) -> void:
+	var tapped := false
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		tapped = true
+	elif event is InputEventScreenTouch and not event.pressed:
+		tapped = true
+	if not tapped:
+		return
+	var now := Time.get_ticks_msec()
+	# Los toques tienen que ir seguidos: espaciados, el contador se reinicia.
+	# Así nadie acaba aquí por tocar la pantalla sin querer.
+	_secret_taps = (_secret_taps + 1) if now - _secret_last_tap_ms < 900 else 1
+	_secret_last_tap_ms = now
+	if _secret_taps >= 5:
+		_secret_taps = 0
+		Sfx.play("chime", 0.0)
+		_open_server_modal()
+
+## Dónde vive el relé. Se llega por el acceso oculto de arriba. Queda guardado
+## en el aparato, así que cambiar de servidor NO obliga a reinstalar el juego.
 func _open_server_modal() -> void:
 	var inner := _modal_box()
 	inner.add_child(DutchUI.title("Servidor de partidas", 24))
@@ -904,13 +947,6 @@ func _end_tutorial() -> void:
 	GameLogic.burn_window_ms = GameLogic.BURN_WINDOW_MS
 	clear_input_gate()
 
-func _generate_room_code() -> String:
-	var alphabet := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-	var s := ""
-	for i in range(4):
-		s += alphabet[randi() % alphabet.length()]
-	return s
-
 ## ---------- DESPACHO DE RENDER ----------
 
 func _render() -> void:
@@ -955,18 +991,25 @@ func _show_lobby() -> void:
 	box.custom_minimum_size = Vector2(460, 0)
 	center.add_child(box)
 
-	box.add_child(_title("Sala de espera", 26))
-	var code_panel := _panel(true)
-	box.add_child(code_panel)
-	var code_box := _col(2)
-	code_panel.add_child(code_box)
-	code_box.add_child(DutchUI.title(NetworkManager.room_code, 40))
-	code_box.add_child(_label("Comparte este código con tus amigos", 12, DutchUI.TEXT_MUTED, true))
+	var publica: bool = NetworkManager.room_is_public
+	box.add_child(_title("Mesa abierta" if publica else "Sala de espera", 26))
+
+	# En una mesa pública el código no sirve de nada: nadie va a escribirlo, la
+	# gente llega buscando. Enseñarlo sólo añadiría ruido.
+	if not publica:
+		var code_panel := _panel(true)
+		box.add_child(code_panel)
+		var code_box := _col(2)
+		code_panel.add_child(code_box)
+		code_box.add_child(DutchUI.title(NetworkManager.room_code, 40))
+		code_box.add_child(_label("Comparte este código con tus amigos", 12, DutchUI.TEXT_MUTED, true))
 
 	# Mientras el relé no conteste no hay estado que enseñar, y sin este aviso
 	# la pantalla se quedaba en blanco sin explicar que está conectando.
 	if NetworkManager.link == NetworkManager.Link.CONNECTING:
-		box.add_child(_label("Conectando con el servidor...", 13, DutchUI.TEXT_MUTED, true))
+		box.add_child(_label(
+			"Buscando partida..." if NetworkManager.searching else "Conectando con el servidor...",
+			13, DutchUI.TEXT_MUTED, true))
 
 	var st: Dictionary = GameLogic.state
 	if not st.is_empty():
@@ -975,21 +1018,36 @@ func _show_lobby() -> void:
 		box.add_child(players_panel)
 		var players_box := _col(6)
 		players_panel.add_child(players_box)
+		var pending: Array = GameLogic.lobby_pending_names()
 		for p in players:
 			var row := _row(8)
 			row.alignment = BoxContainer.ALIGNMENT_BEGIN
 			players_box.add_child(row)
 			var is_bot: bool = bool(p.get("bot", false))
+			var is_host_row: bool = p.id == st.host_id
 			row.add_child(_avatar(p.name, false, 26))
 			var tag := ""
-			if p.id == st.host_id:
+			if is_host_row:
 				tag = " · anfitrión"
 			elif is_bot:
 				tag = " · bot"
 			row.add_child(_label("%s%s" % [p.name, tag], 14,
 				DutchUI.TEXT_MUTED if is_bot else DutchUI.TEXT))
+			row.add_child(_spacer())
+			# El anfitrión no se declara listo: su "estoy listo" es pulsar
+			# "Iniciar partida", así que marcarlo dos veces sobraría.
+			if not is_host_row:
+				var ready: bool = bool(p.get("ready_lobby", false))
+				row.add_child(_label("LISTO" if ready else "esperando", 12,
+					DutchUI.GOLD if ready else DutchUI.TEXT_MUTED))
 		for i in range(NetworkManager.MAX_PLAYERS - players.size()):
 			players_box.add_child(_label("· hueco libre", 13, Color(DutchUI.TEXT_MUTED, 0.5)))
+
+		# En una mesa pública el anfitrión no sabe si va a aparecer alguien, así
+		# que conviene decirle que no tiene por qué esperar de brazos cruzados.
+		if publica and NetworkManager.is_host and players.size() < NetworkManager.MAX_PLAYERS:
+			box.add_child(_label("Cualquiera que busque partida puede sentarse aquí.", 12, DutchUI.TEXT_MUTED, true))
+			box.add_child(_label("Si te cansas de esperar, rellena con bots y empieza.", 12, DutchUI.TEXT_MUTED, true))
 
 		# Rellenar la mesa con bots: para jugar online no hace falta ser cuatro.
 		if NetworkManager.is_host:
@@ -1011,15 +1069,34 @@ func _show_lobby() -> void:
 		var actions := _row(8)
 		box.add_child(actions)
 		if NetworkManager.is_host:
-			var can_start: bool = players.size() >= 2
-			var start_btn := _btn("Iniciar partida" if can_start else "Faltan jugadores o bots", func():
+			var enough: bool = players.size() >= 2
+			var everyone: bool = pending.is_empty()
+			var texto := "Iniciar partida"
+			if not enough:
+				texto = "Faltan jugadores o bots"
+			elif not everyone:
+				texto = "Esperando a %s" % ", ".join(pending)
+			var start_btn := _btn(texto, func():
 				NetworkManager.request_start_game()
 			, true)
-			start_btn.disabled = not can_start
+			start_btn.disabled = not (enough and everyone)
 			start_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			actions.add_child(start_btn)
 		else:
-			box.add_child(_label("Esperando a que el anfitrión empiece...", 13, DutchUI.TEXT_MUTED, true))
+			# El invitado marca que está: hasta que lo hagan todos, el anfitrión
+			# no puede repartir. Es un interruptor, no un botón de un solo uso:
+			# si te has precipitado, puedes echarte atrás.
+			var me_lobby := _find_me()
+			var i_am_ready: bool = bool(me_lobby.get("ready_lobby", false))
+			var ready_btn := _btn("Ya no estoy listo" if i_am_ready else "Estoy listo", func():
+				NetworkManager.request_lobby_ready(not i_am_ready)
+			, not i_am_ready)
+			ready_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			actions.add_child(ready_btn)
+			box.add_child(_label(
+				"Esperando a que el anfitrión reparta..." if i_am_ready
+				else "Avisa cuando estés preparado para empezar",
+				13, DutchUI.TEXT_MUTED, true))
 		var leave := _btn("Salir", func(): _back_to_menu())
 		leave.custom_minimum_size = Vector2(120, 44)
 		actions.add_child(leave)

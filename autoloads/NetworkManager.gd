@@ -40,9 +40,13 @@ const MAX_PLAYERS: int = 4
 const BOT_BASE_ID: int = 101
 const BOT_NAMES: Array[String] = ["Ana", "Bruno", "Clara", "Diego", "Elena"]
 
-## Dirección del relé. Se puede cambiar desde el propio juego (menú → Servidor)
-## y queda guardada, así que para estrenar un servidor nuevo NO hace falta
-## reexportar la aplicación.
+## Dirección del relé. Viene puesta de fábrica para que el jugador no tenga que
+## configurar nada: crear partida y unirse funcionan de entrada.
+##
+## Se puede cambiar sin reexportar la aplicación, pero por un acceso OCULTO
+## (cinco toques en la línea pequeña de la portada), no por un botón del menú:
+## a un jugador normal la palabra "servidor" sólo le desconcierta. Está ahí por
+## si algún día el relé se muda de sitio.
 const DEFAULT_RELAY_URL := "wss://dutch-relay.onrender.com/"
 const SETTINGS_PATH := "user://settings.cfg"
 
@@ -179,16 +183,43 @@ func _begin_bot_round() -> void:
 	_bot_next_action_at_ms = Time.get_ticks_msec() + 700
 
 ## ---------- PARTIDA ONLINE ----------
+##
+## Tres maneras de entrar, y las tres acaban en el mismo sitio:
+##
+##   host_game()    creas una mesa y repartes el código a quien tú quieras
+##   join_game()    entras en la mesa de un amigo con su código
+##   find_public()  buscas mesa con desconocidos
+##
+## En las dos primeras se sabe desde el principio si eres anfitrión o invitado.
+## En la tercera NO: eso lo decide el servidor según haya mesa abierta o no, y
+## hasta que conteste no se sabe. Por eso `is_host` se fija al recibir la
+## respuesta y no antes.
 
-func host_game(code: String, name: String) -> void:
-	_start_online(name, code, true, {"t": "host", "room": code, "name": name})
+## ¿Esta mesa se ofrece a desconocidos? Sólo importa siendo anfitrión.
+var room_is_public: bool = false
+## Estamos buscando mesa y aún no sabemos si acabaremos de anfitrión.
+var searching: bool = false
+
+func host_game(name: String, public: bool = false) -> void:
+	room_is_public = public
+	_start_online(name, "", true, {"t": "host", "name": name, "public": public})
 
 func join_game(code: String, name: String) -> void:
-	_start_online(name, code, false, {"t": "join", "room": code, "name": name})
+	room_is_public = false
+	_start_online(name, code.to_upper(), false, {"t": "join", "room": code.to_upper(), "name": name})
+
+## Buscar partida pública. Se le pregunta al servidor si hay mesa abierta: si la
+## hay te sienta en ella, y si no, abres tú una y esperas. Nunca se acaba en un
+## "no hay partidas" sin salida, que es lo que mata a un juego con pocos
+## jugadores.
+func find_public_game(name: String) -> void:
+	room_is_public = true
+	searching = true
+	_start_online(name, "", false, {"t": "quick"})
 
 func _start_online(name: String, code: String, as_host: bool, hello: Dictionary) -> void:
 	if not relay_url_looks_valid():
-		connection_error.emit("Falta la dirección del servidor. Ponla en el menú, botón \"Servidor\".")
+		connection_error.emit("No hay servidor configurado para jugar online.")
 		return
 	_close_socket()
 	local_mode = false
@@ -206,12 +237,13 @@ func _start_online(name: String, code: String, as_host: bool, hello: Dictionary)
 	_bot_running = as_host
 	GameLogic.state = {}
 	_hello = hello
+	_told_relay_playing = false
 	link = Link.CONNECTING
 	connection_changed.emit()
 	_ws = WebSocketPeer.new()
 	var err := _ws.connect_to_url(relay_url)
 	if err != OK:
-		_fail("No se pudo conectar con %s" % relay_url)
+		_fail("No se pudo conectar. Revisa tu conexión a internet.")
 
 func leave_game() -> void:
 	if _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
@@ -226,6 +258,8 @@ func leave_game() -> void:
 	tutorial_bots_paused = false
 	GameLogic.burn_window_ms = GameLogic.BURN_WINDOW_MS
 	is_host = false
+	room_is_public = false
+	searching = false
 	room_code = ""
 	my_id = -1
 	GameLogic.state = {}
@@ -260,8 +294,12 @@ func _poll_socket() -> void:
 			_hello = {}
 		elif st == WebSocketPeer.STATE_CLOSED:
 			var code := _ws.get_close_code()
+			# El servidor gratuito se duerme si lleva un rato sin usarse y tarda
+			# unos segundos en despertar, así que el primer intento puede fallar
+			# sin que pase nada raro. El mensaje invita a reintentar en vez de
+			# dar a entender que está roto.
 			_fail("Se perdió la conexión con el servidor." if code != -1 else
-				"No se pudo contactar con el servidor. ¿Es correcta la dirección?")
+				"No se pudo conectar. Revisa tu internet y vuelve a intentarlo en unos segundos.")
 			return
 	while _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN and _ws.get_available_packet_count() > 0:
 		# El orden importa: was_string_packet() habla del ÚLTIMO paquete
@@ -280,13 +318,30 @@ func _on_control(text: String) -> void:
 		return
 	var msg: Dictionary = json.data
 	match str(msg.get("t", "")):
+		"match":
+			# Respuesta a la búsqueda: o hay mesa abierta, o abrimos nosotros.
+			searching = false
+			var found := str(msg.get("room", ""))
+			if found != "":
+				_ws.send_text(JSON.stringify({"t": "join", "room": found, "name": my_name}))
+			else:
+				is_host = true
+				_bot_running = true
+				_ws.send_text(JSON.stringify({"t": "host", "name": my_name, "public": true}))
 		"hosted":
+			room_code = str(msg.get("room", room_code))
+			room_is_public = bool(msg.get("public", false))
+			is_host = true
+			_bot_running = true
 			my_id = int(msg.get("id", 1))
 			link = Link.READY
 			GameLogic.reset_lobby(my_id, my_name)
 			connection_changed.emit()
 			joined_as.emit(my_id)
 		"joined":
+			room_code = str(msg.get("room", room_code))
+			is_host = false
+			_bot_running = false
 			my_id = int(msg.get("id", -1))
 			link = Link.READY
 			connection_changed.emit()
@@ -352,9 +407,20 @@ func _on_data(pkt: PackedByteArray) -> void:
 
 ## ---------- ESTADO ----------
 
+## Lo último que se le dijo al relé sobre si esta mesa ya está jugando. Se
+## guarda para no repetírselo en cada cambio de estado, que son muchos.
+var _told_relay_playing: bool = false
+
 func _on_state_changed() -> void:
 	if is_host and online:
 		_send_data(0, {"k": "state", "s": GameLogic.state})
+		# Una mesa pública deja de ofrecerse en cuanto se reparte: si no, al que
+		# está buscando lo sentarían en una partida ya empezada.
+		var playing: bool = str(GameLogic.state.get("status", "")) != "lobby"
+		if playing != _told_relay_playing:
+			_told_relay_playing = playing
+			if _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+				_ws.send_text(JSON.stringify({"t": "room", "playing": playing}))
 	game_state_updated.emit()
 
 ## ---------- PETICIONES ----------
@@ -382,6 +448,7 @@ func request_eleven_target(target_id: int) -> void: _send_request("eleven_target
 func request_eleven_target_slot(idx: int) -> void: _send_request("eleven_target_slot", {"idx": idx})
 func request_eleven_my_slot(idx: int) -> void: _send_request("eleven_my_slot", {"idx": idx})
 func request_play_again() -> void: _send_request("play_again")
+func request_lobby_ready(ready: bool) -> void: _send_request("lobby_ready", {"ready": ready})
 func request_add_bot() -> void: _send_request("add_bot")
 func request_remove_bot() -> void: _send_request("remove_bot")
 
@@ -413,6 +480,7 @@ func _apply_request(pid: int, op: String, args: Variant) -> void:
 		"play_again":
 			if GameLogic.play_again(pid):
 				_begin_bot_round()
+		"lobby_ready": GameLogic.set_lobby_ready(pid, bool(a.get("ready", true)))
 		"add_bot":
 			if GameLogic.add_bot(pid, _free_bot_name()):
 				_bot_running = true

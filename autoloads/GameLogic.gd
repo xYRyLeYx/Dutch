@@ -87,6 +87,10 @@ func _new_player(peer_id: int, name: String, is_bot: bool = false) -> Dictionary
 		"peeked_idx": [],
 		"ready_peek": false,
 		"bot": is_bot,
+		# Listo EN LA SALA DE ESPERA, que no es lo mismo que ready_peek (ése es
+		# el de después, cuando ya has mirado tus dos cartas). Los bots nacen
+		# listos: no tienen a nadie a quien esperar.
+		"ready_lobby": is_bot,
 	}
 
 func _find_player(peer_id: int) -> Dictionary:
@@ -164,10 +168,46 @@ func make_bot(peer_id: int) -> bool:
 	state_changed.emit()
 	return true
 
+## ---------- "ESTOY LISTO" DE LA SALA DE ESPERA ----------
+##
+## Sin esto, el anfitrión reparte cuando le apetece y a los demás les puede
+## pillar leyendo las reglas o sin haber terminado de sentarse. Ahora cada
+## invitado avisa de que está, y hasta entonces el botón de empezar no se
+## enciende.
+##
+## El anfitrión no marca nada: su "estoy listo" es pulsar "Iniciar partida".
+
+func set_lobby_ready(peer_id: int, ready: bool) -> bool:
+	if state.get("status", "") != "lobby":
+		return false
+	var p := _find_player(peer_id)
+	if p.is_empty() or peer_id == state.get("host_id", -1):
+		return false
+	if bool(p.get("ready_lobby", false)) == ready:
+		return false
+	p.ready_lobby = ready
+	_push_log("%s %s." % [p.name, "está listo" if ready else "ya no está listo"])
+	state_changed.emit()
+	return true
+
+## A quién se está esperando todavía. Devuelve nombres y no un simple sí/no
+## para que la sala pueda decir a quién, que es la información que de verdad
+## hace falta cuando la partida no arranca.
+func lobby_pending_names() -> Array:
+	var pending: Array = []
+	for p in state.get("players", []):
+		if p.id == state.get("host_id", -1):
+			continue
+		if not bool(p.get("ready_lobby", false)):
+			pending.append(str(p.name))
+	return pending
+
 func start_game(requester_id: int) -> bool:
 	if requester_id != state.host_id:
 		return false
 	if state.players.size() < 2:
+		return false
+	if not lobby_pending_names().is_empty():
 		return false
 	var deck: Array[String] = CardData.shuffle_deck(CardData.build_deck())
 	for p in state.players:

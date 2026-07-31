@@ -27,8 +27,36 @@ const ROOM_TTL_MS = 6 * 60 * 60 * 1000;   // salas abandonadas: se limpian solas
 const MAX_ROOMS = 500;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 
-/** code -> { peers: Map(id -> ws), nextId, createdAt } */
+/** code -> { code, peers: Map(id -> ws), nextId, createdAt, isPublic, playing } */
 const rooms = new Map();
+
+// Sin vocales ni caracteres que se confundan al leerlos en voz alta (0/O, 1/I).
+// Un código de sala se dicta por teléfono más veces de las que uno cree.
+const CODE_ALPHABET = 'BCDFGHJKLMNPQRSTVWXYZ23456789';
+
+function newRoomCode() {
+  for (let intento = 0; intento < 50; intento++) {
+    let c = '';
+    for (let i = 0; i < 4; i++) c += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    if (!rooms.has(c)) return c;
+  }
+  return null;
+}
+
+// Salas públicas abiertas: ni empezadas, ni llenas. Se ordenan por la más
+// llena primero, para juntar a la gente en una mesa en vez de repartirla en
+// varias medio vacías — con pocos jugadores, eso es la diferencia entre que
+// haya partida o que no.
+function openPublicRooms() {
+  const out = [];
+  for (const room of rooms.values()) {
+    if (!room.isPublic || room.playing) continue;
+    if (room.peers.size >= MAX_PLAYERS) continue;
+    out.push(room);
+  }
+  out.sort((a, b) => b.peers.size - a.peers.size);
+  return out;
+}
 
 // Un servidor HTTP de verdad y no sólo el WebSocket: casi todas las
 // plataformas de despliegue comprueban que el puerto responde a una petición
@@ -125,20 +153,54 @@ wss.on('connection', (ws) => {
     switch (msg.t) {
       case 'host': {
         if (ws.roomCode) return;
-        if (!code) return sendJson(ws, { t: 'error', m: 'Código de sala inválido.' });
-        if (rooms.has(code)) {
-          return sendJson(ws, { t: 'error', m: 'Ese código ya está en uso. Prueba otra vez.' });
-        }
         if (rooms.size >= MAX_ROOMS) {
           return sendJson(ws, { t: 'error', m: 'El servidor está lleno. Inténtalo en un rato.' });
         }
-        const room = { code, peers: new Map(), nextId: 2, createdAt: Date.now() };
+        // El código lo reparte el servidor, que es el único que sabe cuáles
+        // están ocupados: así dos salas no pueden chocar.
+        //
+        // PERO se respeta el que mande el cliente si viene y está libre. Las
+        // versiones anteriores del juego lo generaban ellas y luego lo enseñaban
+        // por pantalla; si el servidor les devolviera otro distinto, sus amigos
+        // escribirían un código que no existe. Esto mantiene vivas las copias ya
+        // instaladas.
+        const nuevo = (code && !rooms.has(code)) ? code : newRoomCode();
+        if (!nuevo) return sendJson(ws, { t: 'error', m: 'El servidor está lleno. Inténtalo en un rato.' });
+        const room = {
+          code: nuevo,
+          peers: new Map(),
+          nextId: 2,
+          createdAt: Date.now(),
+          isPublic: !!msg.public,
+          playing: false,
+        };
         room.peers.set(1, ws);
-        rooms.set(code, room);
-        ws.roomCode = code;
+        rooms.set(nuevo, room);
+        ws.roomCode = nuevo;
         ws.peerId = 1;
-        sendJson(ws, { t: 'hosted', room: code, id: 1 });
-        log(`sala ${code} creada`);
+        sendJson(ws, { t: 'hosted', room: nuevo, id: 1, public: room.isPublic });
+        log(`sala ${nuevo} creada (${room.isPublic ? 'pública' : 'privada'})`);
+        break;
+      }
+
+      // Buscar partida pública. El servidor no devuelve una lista para que el
+      // jugador elija: devuelve UNA sala o ninguna. Con pocos jugadores, una
+      // lista casi siempre estaría vacía y daría sensación de juego muerto; así
+      // el cliente sabe que, si no hay nadie, le toca abrir mesa él.
+      case 'quick': {
+        if (ws.roomCode) return;
+        const abiertas = openPublicRooms();
+        const elegida = abiertas.length > 0 ? abiertas[0] : null;
+        sendJson(ws, { t: 'match', room: elegida ? elegida.code : '' });
+        break;
+      }
+
+      // El anfitrión avisa de que ya ha repartido, para que su sala deje de
+      // ofrecerse a los que están buscando.
+      case 'room': {
+        const room = roomOf(ws);
+        if (!room || ws.peerId !== 1) return;
+        room.playing = !!msg.playing;
         break;
       }
 

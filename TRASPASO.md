@@ -342,6 +342,23 @@ vuelven convertidos en decimales, y `state.players[turn_index]` falla al indexar
 con un decimal. `bytes_to_var` se llama **sin** `allow_objects`: un paquete que
 llega de fuera jamás debe poder construir objetos.
 
+### "Estoy listo" en la sala de espera
+
+Cada invitado avisa de que está (`ready_lobby`), y hasta que no lo hacen todos
+el anfitrión **no puede repartir**. La comprobación vive en `GameLogic`
+(`start_game` se niega si `lobby_pending_names()` no está vacía), no sólo en el
+botón: un botón en gris no es una regla.
+
+El anfitrión no marca nada — su "estoy listo" es pulsar *Iniciar partida*. Los
+bots nacen listos, así que una partida contra bots arranca de inmediato.
+
+Ojo, son **dos** cosas distintas y con nombres parecidos:
+
+| Campo | Cuándo | Qué significa |
+|---|---|---|
+| `ready_lobby` | Sala de espera | Estoy sentado y preparado para que repartas |
+| `ready_peek` | Tras mirar tus 2 cartas | Ya las he memorizado, que empiece el juego |
+
 ### Bots para no tener que ser cuatro
 
 Un bot es un jugador normal de `state.players` con la marca `bot`. Lo mueve el
@@ -488,9 +505,13 @@ victoria salía más floja que un clic de botón**. `Sfx._pluck()` normaliza.
 
 - **Servicio:** `dutch-relay` en Render, plan gratuito, workspace de Vlad
   Cristian.
-- **Dirección:** `wss://dutch-relay.onrender.com/` — ya es el valor por defecto
-  en `NetworkManager.DEFAULT_RELAY_URL`, y se puede cambiar sin reexportar desde
-  el menú → **Servidor**.
+- **Dirección:** `wss://dutch-relay.onrender.com/` — es el valor por defecto en
+  `NetworkManager.DEFAULT_RELAY_URL`, así que el jugador no configura nada.
+- **Cómo cambiarla sin reexportar:** hay un **acceso oculto**, cinco toques
+  seguidos en la línea pequeña de la portada ("Baraja española · 4 cartas...").
+  No hay botón a la vista a propósito: a un jugador normal la palabra
+  "servidor" sólo le desconcierta, y de cara a la Play Store da mala impresión.
+  El código está en `Main._secret_zone()` / `Main._on_secret_input()`.
 - **Comprobar que vive:** `curl https://dutch-relay.onrender.com/health`
 - **Código:** `server/` del repositorio `github.com/xYRyLeYx/Dutch`.
 
