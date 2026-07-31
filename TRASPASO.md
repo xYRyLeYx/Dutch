@@ -392,8 +392,17 @@ pregunta cuánta gente hay es, precisamente, alguien con el juego abierto. Se
 manda `?me=<id>`, un identificador anónimo inventado al azar la primera vez y
 guardado en `settings.cfg` — no lleva nombre, ni correo, ni nada que apunte a
 una persona; sólo sirve para no contar dos veces al mismo aparato. El menú lo
-repite cada 30 s (`presence_timer` en `Main`), y el servidor olvida a quien
-lleva 75 s sin dar señales.
+repite cada **10 s** (`presence_timer` en `Main`), y el servidor olvida a quien
+lleva 40 s sin dar señales.
+
+Diez segundos y no treinta porque medio minuto mirando un número que no se
+mueve parece que esté roto: el primer aviso que dio Cristian fue justamente que
+"hay que pulsar encima para que se actualice", cuando en realidad ya se
+refrescaba solo. El gasto es el mismo en la práctica — lo que mantiene despierto
+al servidor gratuito es que haya alguien preguntando, no cada cuánto lo haga.
+
+Por lo mismo, cada actualización da un **parpadeo suave** en la etiqueta. Un
+dato que no cambia no se distingue de un dato congelado.
 
 **Nadie se cuenta dos veces.** Al sentarse en una mesa, su conexión pasa a
 contarle y el servidor le borra de la lista del menú. Además, `/status` se

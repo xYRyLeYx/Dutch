@@ -26,9 +26,10 @@ const MAX_PLAYERS = 4;
 const ROOM_TTL_MS = 6 * 60 * 60 * 1000;   // salas abandonadas: se limpian solas
 
 // Cuánto se da por "sigue con el juego abierto" a alguien que dejó de avisar.
-// El juego avisa cada 30 s desde el menú, así que 75 s aguanta un aviso perdido
-// sin llegar a inflar la cuenta con gente que ya cerró.
-const PRESENCE_TTL_MS = 75000;
+// El juego avisa cada 10 s desde el menú, así que 40 s son cuatro avisos
+// seguidos perdidos: da margen de sobra para una red lenta y, a la vez, no
+// arrastra durante más de medio minuto a gente que ya ha cerrado el juego.
+const PRESENCE_TTL_MS = 40000;
 const MAX_ROOMS = 500;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 

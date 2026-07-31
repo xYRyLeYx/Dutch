@@ -167,12 +167,18 @@ func _ready() -> void:
 		if NetworkManager.online and GameLogic.state.is_empty():
 			_show_lobby())
 
-	# Mientras se está en el menú, el juego avisa al servidor de que existe cada
-	# medio minuto. Es lo que permite contar a quien tiene la app abierta sin
-	# estar en ninguna mesa. Sólo corre en el menú: dentro de una partida ya hay
-	# conexión, y así el servidor gratuito puede dormirse cuando no hay nadie.
+	# Mientras se está en el menú, el juego pregunta cuánta gente hay (y de paso
+	# avisa de que él está ahí). Sólo corre en el menú: dentro de una partida ya
+	# hay conexión, y así el servidor gratuito puede dormirse cuando no queda
+	# nadie.
+	#
+	# Cada 10 s y no cada 30: medio minuto mirando un número que no se mueve
+	# parece que esté roto, y el jugador acaba tocándolo para comprobar que va.
+	# El gasto es el mismo en la práctica —lo que mantiene despierto al servidor
+	# es que haya alguien preguntando, no cada cuánto lo haga—, así que más vale
+	# que la cifra sea fresca.
 	var presence_timer := Timer.new()
-	presence_timer.wait_time = 30.0
+	presence_timer.wait_time = 10.0
 	presence_timer.autostart = true
 	add_child(presence_timer)
 	presence_timer.timeout.connect(func():
@@ -919,6 +925,11 @@ func _render_status(recargando: bool = false) -> void:
 	_status_label.text = linea1 + "
 " + linea2
 	_status_label.add_theme_color_override("font_color", color)
+	# Un parpadeo suave en cada actualización. Sin él, un dato que no cambia no
+	# se distingue de un dato congelado, y era justo lo que hacía dudar de si
+	# aquello se refrescaba solo.
+	_status_label.modulate = Color(1, 1, 1, 0.3)
+	_status_label.create_tween().tween_property(_status_label, "modulate", Color(1, 1, 1, 1), 0.5)
 
 ## Sin nombre no se juega a nada: aparece en la mesa de los demás.
 func _name_ok(field: LineEdit) -> bool:
