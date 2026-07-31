@@ -29,6 +29,9 @@ signal game_state_updated
 signal connection_error(message: String)
 signal joined_as(peer_id: int)
 signal connection_changed
+## Cuántos hay conectados ahora mismo. Lo pide el menú para poder avisar de si
+## merece la pena buscar partida.
+signal status_updated(info: Dictionary)
 
 ## Tope de jugadores en una mesa, humanos y bots juntos. Cuatro es lo que
 ## admite el reparto de la pantalla (los rivales van en fila arriba) y también
@@ -137,6 +140,66 @@ func set_relay_url(url: String) -> void:
 
 func relay_url_looks_valid() -> bool:
 	return relay_url.begins_with("ws://") or relay_url.begins_with("wss://")
+
+## ---------- CUÁNTA GENTE HAY ----------
+##
+## Se consulta por HTTP normal, no por WebSocket: mantener una conexión abierta
+## desde el menú sólo para contar cabezas gastaría batería y, con el servidor
+## gratuito, lo tendría despierto (y consumiendo horas) todo el rato.
+##
+## Y NO se consulta en bucle: sólo al entrar al menú y cuando el jugador toca el
+## contador. Un sondeo cada pocos segundos impediría que el servidor se durmiera
+## nunca, que es justo lo que agota la cuota del plan gratuito.
+##
+## Efecto secundario que viene bien: esta consulta DESPIERTA al servidor si
+## estaba dormido, así que cuando el jugador pulse "Buscar partida" ya está en
+## marcha.
+
+var last_status: Dictionary = {}
+var _http: HTTPRequest = null
+
+func fetch_status() -> void:
+	if _http == null:
+		_http = HTTPRequest.new()
+		# Generoso: el servidor gratuito tarda en desperezarse.
+		_http.timeout = 30.0
+		add_child(_http)
+		_http.request_completed.connect(_on_status_response)
+	# Si ya hay una consulta en marcha, no se encima otra.
+	if _http.get_http_client_status() != HTTPClient.STATUS_DISCONNECTED:
+		return
+	var url := status_url()
+	if url == "":
+		return
+	if _http.request(url) != OK:
+		last_status = {"error": true}
+		status_updated.emit(last_status)
+
+## La dirección del relé es de WebSocket (wss://); la consulta va por el mismo
+## sitio pero en HTTP, así que se traduce el esquema.
+func status_url() -> String:
+	var u := relay_url
+	if u.begins_with("wss://"):
+		u = "https://" + u.substr(6)
+	elif u.begins_with("ws://"):
+		u = "http://" + u.substr(5)
+	else:
+		return ""
+	if not u.ends_with("/"):
+		u += "/"
+	return u + "status"
+
+func _on_status_response(result: int, code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		last_status = {"error": true}
+		status_updated.emit(last_status)
+		return
+	var json := JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		last_status = {"error": true}
+	else:
+		last_status = json.data
+	status_updated.emit(last_status)
 
 ## ---------- PARTIDA LOCAL ----------
 

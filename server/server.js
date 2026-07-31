@@ -62,11 +62,39 @@ function openPublicRooms() {
 // plataformas de despliegue comprueban que el puerto responde a una petición
 // normal antes de dar por buena la instancia.
 const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size }));
-    return;
+  // Access-Control-Allow-Origin hace falta para la versión WEB del juego: se
+  // sirve desde otro dominio, y sin esta cabecera el navegador le bloquea la
+  // consulta. Son datos públicos y anónimos (cuántos, no quiénes), así que
+  // abrirlo a cualquier origen no expone nada.
+  const json = (obj) => {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(obj));
+  };
+
+  if (req.url === '/health') return json({ ok: true, rooms: rooms.size });
+
+  // Cuánta gente hay ahora mismo, para que el juego pueda decirte si merece la
+  // pena buscar partida o es mejor jugar contra bots. NO se manda ni un nombre:
+  // sólo números.
+  if (req.url === '/status') {
+    let esperando = 0;
+    let jugando = 0;
+    for (const room of rooms.values()) {
+      if (room.playing) jugando += room.peers.size;
+      else esperando += room.peers.size;
+    }
+    return json({
+      conectados: wss.clients.size,
+      esperando,          // gente sentada en mesas que aún no han repartido
+      jugando,            // gente en partidas ya empezadas
+      mesas_abiertas: openPublicRooms().length,
+    });
   }
+
   res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
   res.end('Relé de Dutch en marcha. Conecta por WebSocket a esta misma URL.\n');
 });

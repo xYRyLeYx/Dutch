@@ -76,6 +76,9 @@ var _tutorial: TutorialOverlay = null
 # Contador de toques del acceso oculto a los ajustes de servidor.
 var _secret_taps: int = 0
 var _secret_last_tap_ms: int = 0
+
+# Aviso de cuánta gente hay conectada, en el menú.
+var _status_label: Label = null
 var _pending_fx: Dictionary = {}
 var _last_fx_seq: int = 0
 var _hidden_by_fx: Array[Control] = []
@@ -159,6 +162,7 @@ func _ready() -> void:
 	# Mientras el relé no contesta no hay estado que dibujar, así que la sala de
 	# espera se redibuja también cuando cambia el estado de la conexión; si no,
 	# se quedaría en "Conectando..." aunque ya estuviera dentro.
+	NetworkManager.status_updated.connect(func(_info): _render_status())
 	NetworkManager.connection_changed.connect(func():
 		if NetworkManager.online and GameLogic.state.is_empty():
 			_show_lobby())
@@ -796,6 +800,15 @@ func _show_home() -> void:
 			_show_lobby()
 	))
 
+	# Cuánta gente hay, justo debajo del botón: es donde hace falta decidir si
+	# esperas o te vas con los bots. Se toca para volver a mirar.
+	_status_label = _label("", 12, DutchUI.TEXT_MUTED, true)
+	_status_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	_status_label.gui_input.connect(_on_status_tap)
+	right.add_child(_status_label)
+	_render_status()
+	NetworkManager.fetch_status()
+
 	right.add_child(_btn("Crear partida privada", func():
 		if not _name_ok(name_input): return
 		NetworkManager.host_game(name_input.text.strip_edges(), false)
@@ -833,6 +846,48 @@ func _show_home() -> void:
 	var rules_btn := _btn("Reglas", func(): _open_rules())
 	rules_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	help_row.add_child(rules_btn)
+
+## ---------- CUÁNTA GENTE HAY ----------
+
+func _on_status_tap(event: InputEvent) -> void:
+	var tapped := false
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		tapped = true
+	elif event is InputEventScreenTouch and not event.pressed:
+		tapped = true
+	if tapped:
+		NetworkManager.fetch_status()
+		_render_status(true)
+
+## El texto se elige para que SIEMPRE diga qué hacer a continuación. "0
+## jugadores conectados" a secas desanima; "no hay nadie, juega contra bots o
+## abre mesa" es la misma información y además resuelve.
+func _render_status(recargando: bool = false) -> void:
+	if not is_instance_valid(_status_label):
+		return
+	var info: Dictionary = NetworkManager.last_status
+	if recargando or info.is_empty():
+		_status_label.text = "Mirando cuánta gente hay..."
+		_status_label.add_theme_color_override("font_color", DutchUI.TEXT_MUTED)
+		return
+	if bool(info.get("error", false)):
+		_status_label.text = "No se pudo saber cuánta gente hay (toca para reintentar)"
+		_status_label.add_theme_color_override("font_color", DutchUI.TEXT_MUTED)
+		return
+	var mesas: int = int(info.get("mesas_abiertas", 0))
+	var esperando: int = int(info.get("esperando", 0))
+	var jugando: int = int(info.get("jugando", 0))
+	var color := DutchUI.TEXT_MUTED
+	var texto := ""
+	if mesas > 0:
+		color = DutchUI.GOLD
+		texto = "Hay %d mesa%s esperando gente. ¡Entra!" % [mesas, "" if mesas == 1 else "s"]
+	elif jugando + esperando > 0:
+		texto = "%d jugando ahora, pero sin mesas libres. Abre una tú." % (jugando + esperando)
+	else:
+		texto = "Ahora mismo no hay nadie. Juega contra bots o avisa a un amigo."
+	_status_label.text = texto
+	_status_label.add_theme_color_override("font_color", color)
 
 ## Sin nombre no se juega a nada: aparece en la mesa de los demás.
 func _name_ok(field: LineEdit) -> bool:

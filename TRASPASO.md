@@ -369,6 +369,27 @@ ocupados. Respeta el que mande el cliente si viene y está libre: las versiones
 anteriores del juego lo generaban ellas, y sin esa concesión las copias ya
 instaladas se habrían quedado inservibles al desplegar.
 
+### Cuánta gente hay conectada
+
+El menú enseña, debajo de "Buscar partida pública", si merece la pena esperar.
+Se pide por **HTTP normal** a `GET /status` del relé (`NetworkManager.fetch_status()`),
+no por WebSocket: tener una conexión abierta desde el menú sólo para contar
+cabezas gastaría batería y mantendría despierto el servidor gratuito.
+
+**No se sondea en bucle**: sólo al entrar al menú y cuando el jugador toca el
+contador. Un sondeo periódico impediría que el servidor se durmiera nunca, que
+es justo lo que agota la cuota del plan gratuito. Efecto secundario útil: la
+consulta lo DESPIERTA, así que al pulsar "Buscar partida" ya está en marcha.
+
+El relé devuelve sólo números, ningún nombre:
+`{conectados, esperando, jugando, mesas_abiertas}`, con
+`Access-Control-Allow-Origin: *` porque si no el navegador se lo bloquearía a
+la versión web.
+
+Los tres mensajes están redactados para que **siempre digan qué hacer después**.
+"0 conectados" a secas desanima; "no hay nadie, juega contra bots o avisa a un
+amigo" es la misma información y además resuelve.
+
 ### "Estoy listo" en la sala de espera
 
 Cada invitado avisa de que está (`ready_lobby`), y hasta que no lo hacen todos
