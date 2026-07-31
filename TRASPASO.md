@@ -382,9 +382,24 @@ es justo lo que agota la cuota del plan gratuito. Efecto secundario útil: la
 consulta lo DESPIERTA, así que al pulsar "Buscar partida" ya está en marcha.
 
 El relé devuelve sólo números, ningún nombre:
-`{conectados, esperando, jugando, mesas_abiertas}`, con
+`{conectados, en_la_app, en_el_menu, esperando, jugando, mesas_abiertas}`, con
 `Access-Control-Allow-Origin: *` porque si no el navegador se lo bloquearía a
 la versión web.
+
+**Cómo se cuenta a quien está en el menú.** Ahí no hay ninguna conexión abierta,
+así que el servidor no puede verle. La consulta de estado hace de aviso: quien
+pregunta cuánta gente hay es, precisamente, alguien con el juego abierto. Se
+manda `?me=<id>`, un identificador anónimo inventado al azar la primera vez y
+guardado en `settings.cfg` — no lleva nombre, ni correo, ni nada que apunte a
+una persona; sólo sirve para no contar dos veces al mismo aparato. El menú lo
+repite cada 30 s (`presence_timer` en `Main`), y el servidor olvida a quien
+lleva 75 s sin dar señales.
+
+**Nadie se cuenta dos veces.** Al sentarse en una mesa, su conexión pasa a
+contarle y el servidor le borra de la lista del menú. Además, `/status` se
+niega a readmitir a un identificador que ya tiene conexión en una sala
+(`enUnaMesa()`): así el número sale bien aunque una versión vieja o modificada
+del juego siguiera preguntando desde dentro de una partida.
 
 Los tres mensajes están redactados para que **siempre digan qué hacer después**.
 "0 conectados" a secas desanima; "no hay nadie, juega contra bots o avisa a un

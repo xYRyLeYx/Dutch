@@ -158,6 +158,24 @@ func relay_url_looks_valid() -> bool:
 var last_status: Dictionary = {}
 var _http: HTTPRequest = null
 
+## Identificador anónimo de ESTE aparato. Sólo sirve para que el servidor no
+## cuente dos veces al mismo cuando pregunta cuánta gente hay. Es un número
+## inventado al azar la primera vez: no lleva el nombre, ni el correo, ni nada
+## que apunte a una persona.
+var _client_id: String = ""
+
+func _ensure_client_id() -> String:
+	if _client_id != "":
+		return _client_id
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	_client_id = str(cfg.get_value("net", "client_id", ""))
+	if _client_id == "":
+		_client_id = "%d-%d" % [Time.get_unix_time_from_system(), randi()]
+		cfg.set_value("net", "client_id", _client_id)
+		cfg.save(SETTINGS_PATH)
+	return _client_id
+
 func fetch_status() -> void:
 	if _http == null:
 		_http = HTTPRequest.new()
@@ -171,6 +189,10 @@ func fetch_status() -> void:
 	var url := status_url()
 	if url == "":
 		return
+	# Preguntar cuánta gente hay ES, a la vez, anunciarse: quien pregunta tiene
+	# el juego abierto. Así no hace falta una segunda petición para decir "sigo
+	# aquí", que sería el doble de tráfico para el mismo dato.
+	url += "?me=" + _ensure_client_id().uri_encode()
 	if _http.request(url) != OK:
 		last_status = {"error": true}
 		status_updated.emit(last_status)
@@ -275,11 +297,12 @@ var searching: bool = false
 
 func host_game(name: String, public: bool = false) -> void:
 	room_is_public = public
-	_start_online(name, "", true, {"t": "host", "name": name, "public": public})
+	_start_online(name, "", true, {"t": "host", "name": name, "public": public, "me": _ensure_client_id()})
 
 func join_game(code: String, name: String) -> void:
 	room_is_public = false
-	_start_online(name, code.to_upper(), false, {"t": "join", "room": code.to_upper(), "name": name})
+	_start_online(name, code.to_upper(), false,
+		{"t": "join", "room": code.to_upper(), "name": name, "me": _ensure_client_id()})
 
 ## Buscar partida pública. Se le pregunta al servidor si hay mesa abierta: si la
 ## hay te sienta en ella, y si no, abres tú una y esperas. Nunca se acaba en un
@@ -288,7 +311,7 @@ func join_game(code: String, name: String) -> void:
 func find_public_game(name: String) -> void:
 	room_is_public = true
 	searching = true
-	_start_online(name, "", false, {"t": "quick"})
+	_start_online(name, "", false, {"t": "quick", "me": _ensure_client_id()})
 
 func _start_online(name: String, code: String, as_host: bool, hello: Dictionary) -> void:
 	if not relay_url_looks_valid():

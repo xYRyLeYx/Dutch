@@ -167,6 +167,18 @@ func _ready() -> void:
 		if NetworkManager.online and GameLogic.state.is_empty():
 			_show_lobby())
 
+	# Mientras se está en el menú, el juego avisa al servidor de que existe cada
+	# medio minuto. Es lo que permite contar a quien tiene la app abierta sin
+	# estar en ninguna mesa. Sólo corre en el menú: dentro de una partida ya hay
+	# conexión, y así el servidor gratuito puede dormirse cuando no hay nadie.
+	var presence_timer := Timer.new()
+	presence_timer.wait_time = 30.0
+	presence_timer.autostart = true
+	add_child(presence_timer)
+	presence_timer.timeout.connect(func():
+		if is_instance_valid(_status_label):
+			NetworkManager.fetch_status())
+
 	var ticker := Timer.new()
 	ticker.wait_time = 0.08
 	ticker.autostart = true
@@ -875,18 +887,37 @@ func _render_status(recargando: bool = false) -> void:
 		_status_label.add_theme_color_override("font_color", DutchUI.TEXT_MUTED)
 		return
 	var mesas: int = int(info.get("mesas_abiertas", 0))
-	var esperando: int = int(info.get("esperando", 0))
 	var jugando: int = int(info.get("jugando", 0))
+	# Cuánta gente tiene el juego abierto, esté donde esté. Los servidores
+	# antiguos no mandan este dato: se recurre a los conectados para que una
+	# versión vieja del relé no deje la línea en blanco.
+	var gente: int = int(info.get("en_la_app", info.get("conectados", 0)))
+	# Uno mismo también cuenta, y decir "1 jugador conectado" cuando ese uno
+	# eres tú suena a tomadura de pelo.
+	var otros: int = max(0, gente - 1)
+
+	var linea1 := ""
+	if otros <= 0:
+		linea1 = "No hay nadie más con el juego abierto"
+	elif otros == 1:
+		linea1 = "1 jugador más con el juego abierto"
+	else:
+		linea1 = "%d jugadores con el juego abierto" % otros
+	if jugando > 0:
+		linea1 += " (%d jugando)" % jugando
+
+	var linea2 := ""
 	var color := DutchUI.TEXT_MUTED
-	var texto := ""
 	if mesas > 0:
 		color = DutchUI.GOLD
-		texto = "Hay %d mesa%s esperando gente. ¡Entra!" % [mesas, "" if mesas == 1 else "s"]
-	elif jugando + esperando > 0:
-		texto = "%d jugando ahora, pero sin mesas libres. Abre una tú." % (jugando + esperando)
+		linea2 = "Hay %d mesa%s esperando gente. ¡Entra!" % [mesas, "" if mesas == 1 else "s"]
+	elif otros > 0:
+		linea2 = "Ninguna mesa abierta: crea una y te verán."
 	else:
-		texto = "Ahora mismo no hay nadie. Juega contra bots o avisa a un amigo."
-	_status_label.text = texto
+		linea2 = "Juega contra bots o avisa a un amigo."
+
+	_status_label.text = linea1 + "
+" + linea2
 	_status_label.add_theme_color_override("font_color", color)
 
 ## Sin nombre no se juega a nada: aparece en la mesa de los demás.

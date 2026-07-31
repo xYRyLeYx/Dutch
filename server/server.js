@@ -24,11 +24,40 @@ const PORT = process.env.PORT || 8080;
 const MAX_PLAYERS = 4;
 
 const ROOM_TTL_MS = 6 * 60 * 60 * 1000;   // salas abandonadas: se limpian solas
+
+// Cuánto se da por "sigue con el juego abierto" a alguien que dejó de avisar.
+// El juego avisa cada 30 s desde el menú, así que 75 s aguanta un aviso perdido
+// sin llegar a inflar la cuenta con gente que ya cerró.
+const PRESENCE_TTL_MS = 75000;
 const MAX_ROOMS = 500;
 const MAX_MESSAGE_BYTES = 256 * 1024;
 
 /** code -> { code, peers: Map(id -> ws), nextId, createdAt, isPublic, playing } */
 const rooms = new Map();
+
+// Quién tiene el juego abierto sin estar en ninguna mesa. Los que SÍ están en
+// una mesa ya se cuentan por su conexión, así que aquí sólo viven los del menú.
+//
+// La clave es un identificador anónimo que se inventa el propio juego: sirve
+// para no contar dos veces al mismo aparato y no dice absolutamente nada de
+// quién es. No se guarda en disco ni sale de la memoria del servidor.
+/** id anónimo -> última señal (ms) */
+const presence = new Map();
+
+function enUnaMesa(id) {
+  const buscado = String(id).slice(0, 40);
+  for (const ws of wss.clients) {
+    if (ws.clientId === buscado && ws.roomCode) return true;
+  }
+  return false;
+}
+
+function prunePresence() {
+  const limite = Date.now() - PRESENCE_TTL_MS;
+  for (const [id, visto] of presence) {
+    if (visto < limite) presence.delete(id);
+  }
+}
 
 // Sin vocales ni caracteres que se confundan al leerlos en voz alta (0/O, 1/I).
 // Un código de sala se dicta por teléfono más veces de las que uno cree.
@@ -75,12 +104,25 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(obj));
   };
 
-  if (req.url === '/health') return json({ ok: true, rooms: rooms.size });
+  const ruta = new URL(req.url, 'http://local');
+
+  if (ruta.pathname === '/health') return json({ ok: true, rooms: rooms.size });
 
   // Cuánta gente hay ahora mismo, para que el juego pueda decirte si merece la
   // pena buscar partida o es mejor jugar contra bots. NO se manda ni un nombre:
   // sólo números.
-  if (req.url === '/status') {
+  if (ruta.pathname === '/status') {
+    // La propia consulta hace de "sigo aquí": el que pregunta cuánta gente hay
+    // es, precisamente, alguien que tiene el juego abierto. Así no hace falta
+    // una segunda petición sólo para anunciarse.
+    const yo = ruta.searchParams.get('me');
+    // ...salvo que ese mismo aparato esté YA sentado en una mesa: entonces su
+    // conexión le cuenta y apuntarle otra vez aquí le contaría dos veces. Se
+    // comprueba en el servidor y no se confía en que el cliente deje de
+    // preguntar, porque una versión vieja o modificada del juego lo haría.
+    if (yo && !enUnaMesa(yo)) presence.set(String(yo).slice(0, 40), Date.now());
+    prunePresence();
+
     let esperando = 0;
     let jugando = 0;
     for (const room of rooms.values()) {
@@ -89,6 +131,11 @@ const server = http.createServer((req, res) => {
     }
     return json({
       conectados: wss.clients.size,
+      // Todos los que tienen el juego abierto: los de las mesas más los que
+      // andan por el menú. Nunca se solapan, porque al sentarse en una mesa se
+      // borra su señal de menú.
+      en_la_app: wss.clients.size + presence.size,
+      en_el_menu: presence.size,
       esperando,          // gente sentada en mesas que aún no han repartido
       jugando,            // gente en partidas ya empezadas
       mesas_abiertas: openPublicRooms().length,
@@ -138,6 +185,7 @@ function log(msg) {
 wss.on('connection', (ws) => {
   ws.roomCode = null;
   ws.peerId = null;
+  ws.clientId = null;
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
 
@@ -177,6 +225,13 @@ wss.on('connection', (ws) => {
       return;
     }
     const code = String(msg.room || '').toUpperCase().slice(0, 8);
+    // En cuanto entra en una mesa, su conexión ya le cuenta: se le quita de la
+    // lista del menú para no contarle dos veces, y se le apunta el
+    // identificador a la conexión para no readmitirle después.
+    if (msg.me) {
+      ws.clientId = String(msg.me).slice(0, 40);
+      presence.delete(ws.clientId);
+    }
 
     switch (msg.t) {
       case 'host': {
@@ -277,6 +332,7 @@ const heartbeat = setInterval(() => {
     ws.isAlive = false;
     ws.ping();
   }
+  prunePresence();
   const now = Date.now();
   for (const [code, room] of rooms) {
     if (now - room.createdAt > ROOM_TTL_MS) {
