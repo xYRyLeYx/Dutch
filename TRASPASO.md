@@ -342,6 +342,33 @@ vuelven convertidos en decimales, y `state.players[turn_index]` falla al indexar
 con un decimal. `bytes_to_var` se llama **sin** `allow_objects`: un paquete que
 llega de fuera jamás debe poder construir objetos.
 
+### Partidas públicas
+
+Tres puertas de entrada, todas al mismo sitio:
+
+| Función | Qué hace |
+|---|---|
+| `host_game(nombre, public)` | Abres mesa. Si `public`, se ofrece a desconocidos |
+| `join_game(codigo, nombre)` | Entras en la mesa de un amigo |
+| `find_public_game(nombre)` | Buscas mesa con desconocidos |
+
+En las dos primeras se sabe desde el principio si eres anfitrión o invitado. En
+la tercera **no**: lo decide el relé según haya mesa abierta o no, así que
+`is_host` se fija al recibir la respuesta (`match`), no antes.
+
+**El servidor devuelve UNA mesa, no una lista.** Con pocos jugadores una lista
+estaría casi siempre vacía y daría sensación de juego muerto. Si no hay nadie,
+el cliente abre mesa él y espera dentro: nunca se acaba en un callejón sin
+salida.
+
+Una mesa pública deja de ofrecerse en cuanto reparte — el anfitrión avisa al
+relé con `{"t":"room","playing":true}`. Una privada no se ofrece nunca.
+
+**Los códigos los reparte el relé**, que es el único que sabe cuáles están
+ocupados. Respeta el que mande el cliente si viene y está libre: las versiones
+anteriores del juego lo generaban ellas, y sin esa concesión las copias ya
+instaladas se habrían quedado inservibles al desplegar.
+
 ### "Estoy listo" en la sala de espera
 
 Cada invitado avisa de que está (`ready_lobby`), y hasta que no lo hacen todos
@@ -555,6 +582,9 @@ Sé honesto con esto al continuar:
   humanos + 1 bot, 2 humanos + 2 bots, y una desconexión brusca a mitad de
   partida (el que se cae pasa a jugarlo un bot y la partida acaba bien). Lo que
   **no** se ha probado es entre dispositivos distintos ni desde el navegador.
+  El emparejamiento público se probó con tres clientes buscando a la vez
+  (acabaron en la misma mesa), y se comprobó que a quien busca no le sientan ni
+  en una partida ya empezada ni en una privada.
   Sí se ha jugado una partida entera contra el relé **ya desplegado en Render**,
   por `wss://`, con los dos clientes coincidiendo en el marcador.
 - El tutorial guionizado se verificó **en ejecución y sin pantalla**, no

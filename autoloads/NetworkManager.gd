@@ -69,6 +69,16 @@ var _ws: WebSocketPeer = null
 var _hello: Dictionary = {}
 var _last_ws_state: int = WebSocketPeer.STATE_CLOSED
 
+## Plazo para acabar de entrar en una partida (conectar + que el servidor te
+## siente en una mesa). Sin esto, un servidor que no contesta deja la pantalla
+## en "Buscando partida..." para siempre, que es peor que un error: el jugador
+## no sabe si esperar o salirse.
+##
+## Es generoso a propósito: el servidor gratuito se duerme y puede tardar medio
+## minuto en despertar. Mientras tanto la sala ya dice que está conectando.
+const CONNECT_TIMEOUT_MS: int = 40000
+var _connect_deadline_ms: int = 0
+
 ## ---------- MODO TUTORIAL ----------
 ##
 ## El tutorial es una partida local igual que la de práctica, pero con el
@@ -238,6 +248,7 @@ func _start_online(name: String, code: String, as_host: bool, hello: Dictionary)
 	GameLogic.state = {}
 	_hello = hello
 	_told_relay_playing = false
+	_connect_deadline_ms = Time.get_ticks_msec() + CONNECT_TIMEOUT_MS
 	link = Link.CONNECTING
 	connection_changed.emit()
 	_ws = WebSocketPeer.new()
@@ -272,18 +283,28 @@ func _close_socket() -> void:
 	_last_ws_state = WebSocketPeer.STATE_CLOSED
 	_hello = {}
 
+## Se recoge TODO antes de avisar, y no al revés. Quien escucha el aviso mira
+## el estado para decidir qué hacer (la interfaz vuelve al menú si ya no hay
+## partida), así que si se avisara primero se encontraría con datos de una
+## conexión que en realidad ya está muerta — y se quedaba encallada en la sala
+## de espera con un mensaje de error encima.
 func _fail(msg: String) -> void:
-	connection_error.emit(msg)
 	_close_socket()
 	online = false
+	searching = false
+	room_is_public = false
 	link = Link.OFFLINE
 	_bot_running = false
 	connection_changed.emit()
+	connection_error.emit(msg)
 
 ## ---------- SOCKET ----------
 
 func _poll_socket() -> void:
 	if _ws == null:
+		return
+	if link != Link.READY and Time.get_ticks_msec() > _connect_deadline_ms:
+		_fail("No se pudo entrar en la partida. Inténtalo otra vez en unos segundos.")
 		return
 	_ws.poll()
 	var st := _ws.get_ready_state()
@@ -329,6 +350,7 @@ func _on_control(text: String) -> void:
 				_bot_running = true
 				_ws.send_text(JSON.stringify({"t": "host", "name": my_name, "public": true}))
 		"hosted":
+			_connect_deadline_ms = 0x7FFFFFFF
 			room_code = str(msg.get("room", room_code))
 			room_is_public = bool(msg.get("public", false))
 			is_host = true
@@ -339,6 +361,7 @@ func _on_control(text: String) -> void:
 			connection_changed.emit()
 			joined_as.emit(my_id)
 		"joined":
+			_connect_deadline_ms = 0x7FFFFFFF
 			room_code = str(msg.get("room", room_code))
 			is_host = false
 			_bot_running = false
